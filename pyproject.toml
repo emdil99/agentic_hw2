@@ -8,6 +8,9 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "google-cloud-aiplatform>=2.8.0",
+    "litellm>=1.109.0",
+    "rank-bm25>=0.2.2",
     "requests>=2.34.2",
 ]
 
