@@ -1,0 +1,37 @@
+{
+  "pulled_on": "2026-11-09",
+  "source": "https://api.ods.od.nih.gov/dsld/v9",
+  "limit_per_category": 300,
+  "excludes": "labels marked offMarket",
+  "categories": {
+    "creatine": {
+      "search_terms": {
+        "creatine": 3957
+      },
+      "labels_selected": 300
+    },
+    "whey protein": {
+      "search_terms": {
+        "whey protein": 40155
+      },
+      "labels_selected": 300
+    },
+    "electrolytes": {
+      "search_terms": {
+        "electrolyte": 1337,
+        "electrolytes": 2105
+      },
+      "labels_selected": 299
+    },
+    "collagen": {
+      "search_terms": {
+        "collagen": 79009
+      },
+      "labels_selected": 300
+    }
+  },
+  "unique_labels_selected": 1199,
+  "labels_in_multiple_categories": 0,
+  "duplicate_labels_dropped": 264,
+  "corpus_documents": 935
+}
