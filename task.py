@@ -13,9 +13,11 @@ import re
 import google.auth
 from inspect_ai import Task, task
 from inspect_ai.dataset import json_dataset
-from inspect_ai.model import ModelOutput
-from inspect_ai.scorer import CORRECT, INCORRECT, Score, Target, accuracy, scorer, stderr
+from inspect_ai.model import GenerateConfig, ModelOutput, ResponseSchema, get_model
+from inspect_ai.scorer import CORRECT, INCORRECT, Score, Target, accuracy, model_graded_qa, scorer, stderr
 from inspect_ai.solver import Generate, TaskState, solver
+from inspect_ai.util import json_schema
+from pydantic import BaseModel, Field, ValidationError
 
 import agent
 
@@ -105,12 +107,95 @@ def numeric_match():
     return score
 
 
+# ---------- Model-graded: golden reference ----------
+
+# Inspect fills in {question}, {answer}, {criterion} (the gold target) and {instructions}.
+REFERENCE_TEMPLATE = """You are grading an answer to a question about a dietary supplement label by comparing it to the gold answer, which was taken from the label itself.
+
+[BEGIN DATA]
+***
+[Question]: {question}
+***
+[Gold answer]: {criterion}
+***
+[Answer]: {answer}
+***
+[END DATA]
+
+How to judge, depending on the gold answer:
+- An amount: correct if the answer states the same amount in any unit (1.5 g is 1500 mg). Extra detail is fine.
+- "The label does not disclose this amount": correct only if the answer says the amount is not given and does not state or estimate one.
+- "This product is not in the database": correct only if the answer says the product could not be found and does not give an amount.
+- "No, the label does not list ...": correct only if the answer says the ingredient is not listed.
+- A product name (from a which-has-more question): correct if the answer picks that same product.
+- Label text such as warnings or directions: correct if the answer conveys the main points. It does not need to quote them.
+
+{instructions}"""
+
+model_graded_reference = model_graded_qa(template=REFERENCE_TEMPLATE)
+
+
+# ---------- Model-graded: rubric ----------
+
+RUBRIC_PROMPT = """You are grading an answer to a shopper's question about a dietary supplement label against a rubric. Judge each criterion on its own, and do not judge whether the answer is correct.
+
+Question: {question}
+
+Answer: {answer}
+
+Rubric:
+- leads_with_answer: The first sentence answers the question directly: an amount, a yes or no, a product name, or a clear statement that the information is not available.
+- cites_label: Gives the DSLD ID or the link to the label the answer came from. If no product was found, passes when it says what it searched for.
+- separates_label_from_advice: Anything a label would not say, such as dosing advice, health effects or general nutrition facts, is clearly marked as not coming from the label. Passes if the answer contains no such content."""
+
+
+class Criterion(BaseModel):
+    reason: str
+    passed: bool = Field(alias="pass")
+
+
+class RubricGrades(BaseModel):
+    leads_with_answer: Criterion
+    cites_label: Criterion
+    separates_label_from_advice: Criterion
+
+
+async def judge(prompt: str, schema: type[BaseModel]) -> BaseModel | None:
+    """Ask the grader model for JSON matching the schema. None if it does not parse."""
+    # The "grader" role (--model-role grader=...), or the task's model when unset.
+    result = await get_model(role="grader").generate(
+        prompt,
+        config=GenerateConfig(response_schema=ResponseSchema(name=schema.__name__, json_schema=json_schema(schema))),
+    )
+    try:
+        return schema.model_validate_json(result.completion)
+    except ValidationError:
+        return None
+
+
+@scorer(metrics={"*": [accuracy(), stderr()]})
+def model_graded_rubric():
+    async def score(state: TaskState, target: Target) -> Score:
+        prompt = RUBRIC_PROMPT.format(question=state.input_text, answer=state.output.completion)
+        grades = await judge(prompt, RubricGrades)
+        if grades is None:
+            return Score.unscored(reason="grader_failed")
+        return Score(
+            value={name: CORRECT if criterion.passed else INCORRECT for name, criterion in grades},
+            answer=state.output.completion,
+            explanation=grades.model_dump_json(by_alias=True, indent=2),
+        )
+
+    return score
+
+
 @task
 def supplement_labels(split: str = "dev") -> Task:
     dataset = json_dataset("evals/dataset.jsonl").filter(lambda sample: sample.metadata["split"] == split)
     return Task(
         dataset=dataset,
         solver=supplement_agent(),
-        scorer=[retrieved_gold_labels(), numeric_match()],
+        # The first scorer's first metric is the headline number: the reference judge's accuracy.
+        scorer=[model_graded_reference, model_graded_rubric(), retrieved_gold_labels(), numeric_match()],
         model="google/vertex/gemini-3.5-flash-lite",
     )
