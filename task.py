@@ -26,7 +26,7 @@ if not os.environ.get("GOOGLE_CLOUD_PROJECT"):
     os.environ["GOOGLE_CLOUD_PROJECT"] = google.auth.default()[1] or ""
 os.environ.setdefault("GOOGLE_CLOUD_LOCATION", "global")
 
-NUMERIC_TYPES = {"direct_dose", "container_total"}
+NUMERIC_TYPES = {"direct_dose", "container_total", "partial_name_same"}
 NUMBER_WITH_UNIT = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*(mcg|micrograms?|mg|milligrams?|grams?|g)\b", re.IGNORECASE)
 NUMERIC_TOLERANCE = 0.005
 
@@ -127,6 +127,8 @@ How to judge, depending on the gold answer:
 - "The label does not disclose this amount": correct only if the answer says the amount is not given and does not state or estimate one.
 - "This product is not in the database": correct only if the answer says the product could not be found and does not give an amount.
 - "No, the label does not list ...": correct only if the answer says the ingredient is not listed.
+- An amount followed by "the same in all N versions": correct if the answer states that amount.
+- "It depends on the version", followed by each version's amount: correct only if the answer says the amount differs between versions, or asks which version is meant, and does not give one amount as the answer for the whole product. Listing each version's amount is fine.
 - A product name (from a which-has-more question): correct if the answer picks that same product.
 - Label text such as warnings or directions: correct if the answer conveys the main points. It does not need to quote them.
 

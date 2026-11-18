@@ -33,7 +33,18 @@ QUOTAS = {
     "direct_dose": 8,
 }
 
-ABSENT_INGREDIENTS = ["sucralose", "aspartame", "stevia", "caffeine", "titanium dioxide"]
+# Added in dataset v2, after the v1 baseline scored near the ceiling. These use their own random
+# generator and run after everything else, so the 100 v1 questions stay identical.
+PARTIAL_NAME_QUOTAS = {
+    "partial_name_same": 3,
+    "partial_name_varies": 3,
+}
+PARTIAL_NAME_SEED = SEED + 1
+# A family must fit in one page of search results, so search can show the agent every version.
+MIN_FAMILY_SIZE = 2
+MAX_FAMILY_SIZE = 5
+
+ABSENT_INGREDIENTS =["sucralose", "aspartame", "stevia", "caffeine", "titanium dioxide"]
 INVENTED_PRODUCTS = {
     "creatine": ("Northbridge Labs CreaPure Max Tropical", "creatine"),
     "whey protein": ("Halcyon Foundry Whey Isolate Maple", "protein"),
@@ -55,6 +66,8 @@ def load_labels():
         raw_path = RAW_DIR / f"{record['id']}.json"
         label = json.loads(raw_path.read_text(encoding="utf-8"))
         label["category"] = record["metadata"]["categories"][0]
+        label["brand_name"] = record["metadata"]["brand"]
+        label["product_name"] = record["metadata"]["product"]
         label["display_name"] = f"{record['metadata']['brand']} {record['metadata']['product']}"
         labels.append(label)
     return labels
@@ -219,6 +232,99 @@ def make_unknown_product(category):
     }
 
 
+def common_prefix(name_a, name_b):
+    """Return the leading words two product names share, such as 'Best Creatine'."""
+    shared = []
+    for word_a, word_b in zip(name_a.split(), name_b.split()):
+        if word_a.casefold() != word_b.casefold():
+            break
+        shared.append(word_a)
+    return " ".join(shared)
+
+
+def product_families(labels):
+    """Group labels one brand sells under a shared name, like the flavors of one product.
+
+    Returns {(brand, shared name): [labels]}. A shared name must be at least two words and must not
+    be the complete name of any member, so a question using it really is ambiguous.
+    """
+    by_brand = defaultdict(list)
+    for label in labels:
+        by_brand[(label["category"], label["brand_name"])].append(label)
+
+    families = {}
+    for (_, brand), members in by_brand.items():
+        for label_a in members:
+            for label_b in members:
+                if label_a["id"] >= label_b["id"]:
+                    continue
+                prefix = common_prefix(label_a["product_name"], label_b["product_name"])
+                if len(prefix.split()) < 2 or (brand, prefix) in families:
+                    continue
+                family = [m for m in members if m["product_name"].casefold().startswith(prefix.casefold() + " ")]
+                complete_name = any(m["product_name"].casefold() == prefix.casefold() for m in members)
+                if MIN_FAMILY_SIZE <= len(family) <= MAX_FAMILY_SIZE and not complete_name:
+                    families[(brand, prefix)] = family
+    return families
+
+
+def make_partial_name(brand, prefix, family, rng):
+    """Ask about a product by its shared name. The answer depends on whether its versions agree."""
+    category = family[0]["category"]
+    groups = TARGET_GROUPS[category][:]
+    rng.shuffle(groups)
+    for group in groups:
+        doses = [find_dose(label, group) for label in family]
+        if any(dose is None for dose in doses):
+            continue
+        ids = [str(label["id"]) for label in family]
+        question = f"How much {ingredient_word(group)} is in one serving of {brand} {prefix}?"
+        if len(set(doses)) == 1:
+            question_type = "partial_name_same"
+            target = f"{format_mg(doses[0])}, the same in all {len(family)} versions."
+            value = doses[0]
+        else:
+            question_type = "partial_name_varies"
+            versions = "; ".join(f"{label['display_name']}: {format_mg(dose)}" for label, dose in zip(family, doses))
+            target = f"It depends on the version. {versions}"
+            value = dict(zip(ids, doses))
+        return {
+            "id": f"{category.replace(' ', '-')}-{question_type}-{ids[0]}",
+            "input": question,
+            "target": target,
+            "metadata": {
+                "type": question_type,
+                "category": category,
+                "gold_label_ids": ids,
+                "value_mg": value,
+                "origin": "dsld_label_family",
+                "source": " ".join(f"{LABEL_PAGE_URL}/{label_id}" for label_id in ids),
+            },
+        }
+    return None
+
+
+def build_partial_name_questions(labels, used_ids, rng):
+    families = list(product_families(labels).items())
+    rng.shuffle(families)
+    samples = []
+    for category in TARGET_GROUPS:
+        made = defaultdict(int)
+        for (brand, prefix), family in families:
+            if family[0]["category"] != category or any(str(label["id"]) in used_ids for label in family):
+                continue
+            sample = make_partial_name(brand, prefix, family, rng)
+            if sample is None or made[sample["metadata"]["type"]] >= PARTIAL_NAME_QUOTAS[sample["metadata"]["type"]]:
+                continue
+            samples.append(sample)
+            made[sample["metadata"]["type"]] += 1
+            used_ids.update(sample["metadata"]["gold_label_ids"])
+        for question_type, quota in PARTIAL_NAME_QUOTAS.items():
+            if made[question_type] < quota:
+                print(f"SHORT: {category} / {question_type}: made {made[question_type]} of {quota}")
+    return samples
+
+
 def build_category(category, labels, rng):
     labels = labels[:]
     rng.shuffle(labels)
@@ -270,7 +376,7 @@ def assign_splits(samples, rng):
     by_type = defaultdict(list)
     for sample in samples:
         by_type[sample["metadata"]["type"]].append(sample)
-    for question_type in QUOTAS:
+    for question_type in [*QUOTAS, *PARTIAL_NAME_QUOTAS]:
         group = by_type[question_type]
         rng.shuffle(group)
         for position, sample in enumerate(group):
@@ -284,6 +390,7 @@ def main():
     for category in TARGET_GROUPS:
         category_labels = [label for label in labels if label["category"] == category]
         samples.extend(build_category(category, category_labels, rng))
+    samples.extend(build_partial_name_questions(labels, set(), random.Random(PARTIAL_NAME_SEED)))
     assign_splits(samples, rng)
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
