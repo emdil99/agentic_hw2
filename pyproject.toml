@@ -9,12 +9,14 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "agent-client-protocol==0.12.1",
+    "fastapi>=0.162.4",
     "google-cloud-aiplatform>=2.8.0",
     "google-genai>=2.34.0",
     "inspect-ai==0.3.276",
     "litellm>=1.109.0",
     "rank-bm25>=0.2.2",
     "requests>=2.34.2",
+    "uvicorn>=0.54.0",
 ]
 
 [project.scripts]
