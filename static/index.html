@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What's in the Scoop?</title>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<style>
+  :root {
+    --bg: #f6f4ef;
+    --panel: #ffffff;
+    --ink: #1b1b1b;
+    --muted: #5d5a54;
+    --rule: #1b1b1b;
+    --line: #dcd7cc;
+    --accent: #0f766e;
+    --accent-soft: #e0f2ef;
+    --user: #1b1b1b;
+    --user-ink: #ffffff;
+    --warn: #9a3412;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141413;
+      --panel: #1e1e1c;
+      --ink: #ecebe6;
+      --muted: #a9a59c;
+      --rule: #ecebe6;
+      --line: #3a3934;
+      --accent: #5eead4;
+      --accent-soft: #163b37;
+      --user: #ecebe6;
+      --user-ink: #141413;
+      --warn: #fdba74;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  a { color: var(--accent); }
+  .layout {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 24px 16px 40px;
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 28px;
+    align-items: start;
+  }
+  .layout > * { min-width: 0; }
+  @media (max-width: 860px) {
+    .layout { grid-template-columns: minmax(0, 1fr); }
+  }
+
+  header.title { grid-column: 1 / -1; }
+  header.title h1 { margin: 0; font-size: 2rem; letter-spacing: -0.02em; }
+  header.title p { margin: 4px 0 0; color: var(--muted); max-width: 62ch; }
+
+  /* The about panel is styled as a Supplement Facts label. */
+  .facts {
+    background: var(--panel);
+    border: 2px solid var(--rule);
+    padding: 10px 12px 12px;
+    font-size: 0.92rem;
+    position: sticky;
+    top: 16px;
+  }
+  @media (max-width: 860px) { .facts { position: static; order: 2; } }
+  .facts h2 {
+    margin: 0;
+    font-size: 1.9rem;
+    font-weight: 900;
+    letter-spacing: -0.02em;
+    line-height: 1.05;
+  }
+  .facts .rule-thick { border-top: 10px solid var(--rule); margin: 6px 0; }
+  .facts .rule-mid { border-top: 4px solid var(--rule); margin: 6px 0; }
+  .facts .row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    border-top: 1px solid var(--rule);
+    padding: 3px 0;
+  }
+  .facts .row:first-of-type { border-top: 0; }
+  .facts .row b { font-weight: 800; }
+  .facts .indent { padding-left: 14px; }
+  .facts .small { font-size: 0.82rem; color: var(--muted); margin: 6px 0 0; }
+  .facts ul { margin: 4px 0 0; padding-left: 18px; }
+  .facts li { margin: 2px 0; }
+  .facts .label { font-weight: 800; margin-top: 6px; }
+
+  .chat {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    display: flex;
+    flex-direction: column;
+    min-height: 70vh;
+    overflow: hidden;
+  }
+  .chat-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  .chat-head span { color: var(--muted); font-size: 0.9rem; }
+  button {
+    font: inherit;
+    cursor: pointer;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: transparent;
+    color: var(--ink);
+    padding: 6px 14px;
+  }
+  button:hover { border-color: var(--accent); }
+  button:disabled { opacity: 0.5; cursor: wait; }
+
+  .messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .empty h3 { margin: 0 0 6px; }
+  .empty p { margin: 0 0 12px; color: var(--muted); }
+  .examples { display: flex; flex-direction: column; gap: 8px; }
+  .example {
+    text-align: left;
+    border-radius: 10px;
+    padding: 10px 12px;
+    background: var(--accent-soft);
+    border-color: transparent;
+  }
+  .example small { display: block; color: var(--muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; }
+
+  .msg { max-width: 88%; }
+  .msg.user {
+    align-self: flex-end;
+    background: var(--user);
+    color: var(--user-ink);
+    padding: 10px 14px;
+    border-radius: 14px 14px 4px 14px;
+  }
+  .msg.agent { align-self: flex-start; }
+  .msg.agent .bubble {
+    background: var(--bg);
+    padding: 10px 14px;
+    border-radius: 14px 14px 14px 4px;
+    overflow-wrap: anywhere;
+  }
+  .bubble p { margin: 0 0 8px; }
+  .bubble p:last-child { margin-bottom: 0; }
+  .bubble ul, .bubble ol { margin: 4px 0 8px; padding-left: 20px; }
+  .msg.error .bubble { color: var(--warn); }
+
+  details.work {
+    margin-top: 6px;
+    font-size: 0.88rem;
+    border-left: 3px solid var(--accent);
+    padding-left: 10px;
+  }
+  details.work summary { cursor: pointer; color: var(--muted); }
+  .call { margin: 8px 0; }
+  .call code {
+    background: var(--accent-soft);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+  }
+  .call ol, .call ul { margin: 4px 0; padding-left: 20px; }
+  .call .meta { color: var(--muted); }
+  details.raw summary { font-size: 0.8rem; }
+  details.raw pre {
+    max-height: 220px;
+    overflow: auto;
+    background: var(--bg);
+    padding: 8px;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    white-space: pre-wrap;
+  }
+
+  .thinking { color: var(--muted); font-style: italic; }
+
+  form.composer {
+    display: flex;
+    gap: 8px;
+    padding: 12px;
+    border-top: 1px solid var(--line);
+  }
+  form.composer textarea {
+    flex: 1;
+    resize: none;
+    font: inherit;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: var(--bg);
+    color: var(--ink);
+    min-height: 46px;
+  }
+  form.composer button {
+    background: var(--accent);
+    color: var(--panel);
+    border-color: var(--accent);
+    border-radius: 10px;
+    padding: 0 18px;
+    font-weight: 600;
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+  <header class="title">
+    <h1>What's in the Scoop?</h1>
+    <p>Ask what is actually printed on a creatine, whey protein, electrolyte or collagen label. Answers come from NIH label data, cite the label they used, and say so when a label hides something.</p>
+  </header>
+
+  <aside class="facts" aria-label="About this agent">
+    <h2>Agent Facts</h2>
+    <div class="row"><span>Serving size</span><b>1 question</b></div>
+    <div class="row"><span>Labels per container</span><b>935</b></div>
+    <div class="rule-thick"></div>
+    <div class="row"><b>Amount per answer</b><span></span></div>
+    <div class="rule-mid"></div>
+    <div class="row"><b>Creatine labels</b><span>237</span></div>
+    <div class="row"><b>Collagen labels</b><span>235</span></div>
+    <div class="row"><b>Electrolyte labels</b><span>232</span></div>
+    <div class="row"><b>Whey protein labels</b><span>231</span></div>
+    <div class="row indent"><span>Proprietary blends</span><span>flagged</span></div>
+    <div class="row indent"><span>Guessed amounts</span><span>0 g</span></div>
+    <div class="row"><b>Citations</b><span>every answer</span></div>
+    <div class="rule-thick"></div>
+
+    <div class="label">Who it's for</div>
+    <p class="small">People who buy fitness supplements and want to know what is really in the tub before trusting the front of it.</p>
+
+    <div class="label">Suggested use</div>
+    <ul>
+      <li>Name the brand and product, e.g. <i>MTN OPS Creatine Unflavored</i>.</li>
+      <li>Ask about amounts, warnings, directions, or two products side by side.</li>
+      <li>Ask about the whole database: which product has the most or least of something, or how many list an ingredient.</li>
+      <li>Open <b>Show work</b> under any answer to see each search and lookup the agent ran.</li>
+    </ul>
+
+    <div class="label">Warnings</div>
+    <p class="small">Reports what labels say, as transcribed by the NIH Dietary Supplement Label Database (pulled November 2026). Not medical advice: ask a clinician before starting a supplement. Products outside these four categories are not covered.</p>
+  </aside>
+
+  <main class="chat">
+    <div class="chat-head">
+      <span>Supplement label agent</span>
+      <button type="button" id="new-chat">New chat</button>
+    </div>
+    <div class="messages" id="messages">
+      <div class="empty" id="empty">
+        <h3>Try a question</h3>
+        <p>Or type your own below.</p>
+        <div class="examples">
+          <button class="example" type="button"><small>Amount</small>How much creatine is in one serving of MTN OPS Creatine Unflavored?</button>
+          <button class="example" type="button"><small>Hidden in a blend</small>How much magnesium is in one serving of Muscle Feast Electrolytes++ Hydrate Unflavored?</button>
+          <button class="example" type="button"><small>Side by side</small>Which has more protein per serving, NOW Sports Whey Protein Creamy Vanilla or NOW Sports Whey Protein Creamy Chocolate?</button>
+          <button class="example" type="button"><small>Whole database</small>Which electrolyte product in the database has the most sodium per serving?</button>
+          <button class="example" type="button"><small>Whole database</small>How many collagen products in the database list biotin as an ingredient?</button>
+        </div>
+      </div>
+    </div>
+    <form class="composer" id="composer">
+      <textarea id="input" rows="1" placeholder="Ask about a supplement label…" aria-label="Your question"></textarea>
+      <button type="submit" id="send">Ask</button>
+    </form>
+  </main>
+</div>
+
+<script>
+  const messages = document.getElementById("messages");
+  const empty = document.getElementById("empty");
+  const form = document.getElementById("composer");
+  const input = document.getElementById("input");
+  const sendButton = document.getElementById("send");
+  let sessionId = null;
+
+  function scrollToEnd() {
+    messages.scrollTop = messages.scrollHeight;
+  }
+
+  function addUserMessage(text) {
+    const node = document.createElement("div");
+    node.className = "msg user";
+    node.textContent = text;
+    messages.appendChild(node);
+  }
+
+  function renderMarkdown(text) {
+    // Answers quote label text, so sanitize after converting the model's Markdown to HTML.
+    return DOMPurify.sanitize(marked.parse(text), { ADD_ATTR: ["target"] });
+  }
+
+  function element(tag, text, className) {
+    const node = document.createElement(tag);
+    if (text !== undefined) node.textContent = text;
+    if (className) node.className = className;
+    return node;
+  }
+
+  function productLink(product) {
+    const link = element("a", product.product || `${product.brand} - ${product.product}`);
+    link.href = product.url;
+    link.target = "_blank";
+    link.rel = "noopener";
+    return link;
+  }
+
+  function describeCall(call) {
+    const box = element("div", undefined, "call");
+    const args = typeof call.args === "string" ? call.args : JSON.stringify(call.args);
+    const heading = element("div");
+    heading.appendChild(element("code", call.name));
+    heading.append(" " + args);
+    box.appendChild(heading);
+
+    let result;
+    try {
+      result = JSON.parse(call.result);
+    } catch {
+      result = null;
+    }
+
+    if (call.name === "search_labels" && Array.isArray(result)) {
+      box.appendChild(element("div", `Found ${result.length} label${result.length === 1 ? "" : "s"}:`, "meta"));
+      const list = element("ol");
+      for (const item of result) {
+        const li = element("li");
+        li.appendChild(productLink({ product: `${item.brand} ${item.product}`, url: item.url }));
+        li.append(` (DSLD ${item.id})`);
+        list.appendChild(li);
+      }
+      box.appendChild(list);
+    } else if (call.name === "query_database" && result && !result.error) {
+      let summary = `${result.matching_products} ${result.category} product${result.matching_products === 1 ? "" : "s"}`;
+      if (result.contains) summary += ` list ${result.contains}`;
+      if (result.ingredient) {
+        summary += `; ${result.products_ranked} ranked by ${result.ingredient} (${result.sort})`;
+        if (result.products_listing_it_without_one_clear_amount) {
+          summary += `, ${result.products_listing_it_without_one_clear_amount} list it without one clear amount`;
+        }
+      }
+      box.appendChild(element("div", summary, "meta"));
+      const list = element("ol");
+      for (const item of result.products || []) {
+        const li = element("li");
+        li.appendChild(productLink(item));
+        if (item.amount_per_serving) li.append(`: ${item.amount_per_serving} per serving`);
+        list.appendChild(li);
+      }
+      box.appendChild(list);
+    } else if (result && result.error) {
+      box.appendChild(element("div", `Error: ${result.error}`, "meta"));
+    }
+
+    const raw = element("details", undefined, "raw");
+    raw.appendChild(element("summary", "Raw tool output"));
+    raw.appendChild(element("pre", call.result));
+    box.appendChild(raw);
+    return box;
+  }
+
+  function addAgentMessage(text, toolCalls, isError) {
+    const node = element("div", undefined, "msg agent" + (isError ? " error" : ""));
+    const bubble = element("div", undefined, "bubble");
+    bubble.innerHTML = renderMarkdown(text);
+    bubble.querySelectorAll("a").forEach((a) => { a.target = "_blank"; a.rel = "noopener"; });
+    node.appendChild(bubble);
+
+    if (toolCalls && toolCalls.length) {
+      const work = element("details", undefined, "work");
+      work.appendChild(element("summary", `Show work: ${toolCalls.length} tool call${toolCalls.length === 1 ? "" : "s"}`));
+      toolCalls.forEach((call) => work.appendChild(describeCall(call)));
+      node.appendChild(work);
+    }
+    messages.appendChild(node);
+    return node;
+  }
+
+  async function ask(question) {
+    question = question.trim();
+    if (!question) return;
+    empty.remove();
+    addUserMessage(question);
+    input.value = "";
+    sendButton.disabled = true;
+    const thinking = element("div", "Reading labels…", "msg agent thinking");
+    messages.appendChild(thinking);
+    scrollToEnd();
+
+    try {
+      const response = await fetch("/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: question, session_id: sessionId }),
+      });
+      if (!response.ok) throw new Error(`Server returned ${response.status}`);
+      const data = await response.json();
+      sessionId = data.session_id;
+      thinking.remove();
+      addAgentMessage(data.response, data.tool_calls, data.response.startsWith("Model call failed"));
+    } catch (error) {
+      thinking.remove();
+      addAgentMessage(`Something went wrong: ${error.message}. Please try again.`, [], true);
+    } finally {
+      sendButton.disabled = false;
+      input.focus();
+      scrollToEnd();
+    }
+  }
+
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    ask(input.value);
+  });
+
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      ask(input.value);
+    }
+  });
+
+  document.querySelectorAll(".example").forEach((button) => {
+    button.addEventListener("click", () => ask(button.childNodes[1].textContent));
+  });
+
+  document.getElementById("new-chat").addEventListener("click", async () => {
+    if (sessionId) {
+      await fetch(`/clear?session_id=${encodeURIComponent(sessionId)}`, { method: "POST" });
+    }
+    location.reload();
+  });
+</script>
+</body>
+</html>
