@@ -13,7 +13,10 @@ SEARCH_RESULT_COUNT = 5
 
 MODEL = "vertex_ai/gemini-3.5-flash-lite"
 MAX_TOOL_ROUNDS = 6
-SYSTEM_PROMPT = "You answer questions about dietary supplement labels. Use the search_labels tool to look up products."
+SYSTEM_PROMPT = (
+    "You answer questions about dietary supplement labels. Use the search_labels tool to look up products.\n"
+    "End every answer with the labels you used: brand and product name, DSLD ID, and link."
+)
 
 TOOLS = [
     {
