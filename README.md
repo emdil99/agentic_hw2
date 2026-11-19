@@ -4,7 +4,18 @@ An agent that answers questions about what is actually printed on dietary supple
 
 Path: **Evals + simple RAG**.
 
-> **Status:** in progress. The data pipeline, agent and eval suite are done, and the iteration log below is being written as the work happens. The web front end, Cloud Run deployment and the sample-query comparison are still to come.
+## Try it
+
+**Live app: https://agentic-hw2-801623024658.europe-west1.run.app**
+
+The app sits behind Identity-Aware Proxy, so sign in with a `columbia.edu` Google account. It deploys continuously from `main` through Cloud Build. The front end, "What's in the Scoop?", explains what the agent covers and who it is for, offers example questions, and shows every tool call behind an answer under **Show work**. `POST /chat` takes `{"message", "session_id"}` and returns `{"response", "session_id", "tool_calls"}`, the same shape as Project 1. Each tool call carries an `agent` field.
+
+To run it locally, you need a Google Cloud project with Vertex AI enabled:
+
+```
+gcloud auth application-default login
+uv run app.py          # then open http://127.0.0.1:8000
+```
 
 ## Data
 
@@ -32,7 +43,7 @@ The API rate-limits clients. The script waits as long as the API's `Retry-After`
 The system prompt started as one sentence. Changes 1 and 2 below each added to it.
 
 ```
-uv run --no-sync agent.py "How much creatine is in one serving of MTN OPS Creatine Unflavored?"
+uv run agent.py "How much creatine is in one serving of MTN OPS Creatine Unflavored?"
 ```
 
 ## Eval set
@@ -69,13 +80,16 @@ The 142 samples are split into **107 dev** and **35 holdout**, with every fifth 
 - **Deterministic:** `retrieved_gold_labels`, meaning search showed the agent every label the answer needs.
 - **Deterministic:** `numeric_match`, meaning the answer states the gold amount in any weight unit, within 0.5%.
 
-To run the evals, after `gcloud auth application-default login`:
+To run the evals, you need a Google Cloud project with Vertex AI and access to Gemini 3.5 Flash Lite. `uv run` installs the dependencies from `uv.lock` on first use.
 
 ```
-uv run --no-sync inspect eval task.py                     # dev split
-uv run --no-sync inspect eval task.py -T split=holdout    # final check only
-uv run --no-sync inspect view                             # browse every answer and score
+gcloud auth application-default login
+uv run inspect eval task.py                     # dev split, about 3 minutes
+uv run inspect eval task.py -T split=holdout    # final check only
+uv run inspect view                             # browse every answer and score
 ```
+
+By default the grader model is the same Gemini model as the agent, so it grades its own answers. To use a different judge, add `--model-role grader=<model>`.
 
 The logs of each run in the log below are saved in `evals/results/` and open in `inspect view`.
 

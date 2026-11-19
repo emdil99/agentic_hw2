@@ -123,13 +123,24 @@ def describe(document, amount=None):
 
 def query_database(category, ingredient=None, sort="most", contains=None, limit=QUERY_RESULT_LIMIT):
     """Rank or count every label in a category, which search alone cannot do."""
+    # The model fills these arguments, so normalise them instead of trusting their types or casing.
+    category = (category or "").strip().lower()
     if category not in CATEGORIES:
         return {"error": f"Unknown category {category!r}. Choose one of {CATEGORIES}."}
+    sort = (sort or "most").strip().lower()
+    if sort not in ("most", "least"):
+        return {"error": f"Unknown sort {sort!r}. Use 'most' or 'least'."}
+    try:
+        limit = QUERY_RESULT_LIMIT if limit is None else max(1, int(limit))
+    except (TypeError, ValueError):
+        return {"error": f"limit must be a whole number, not {limit!r}."}
+    ingredient = (ingredient or "").strip() or None
+    contains = (contains or "").strip() or None
+
     documents = [d for d in DOCUMENTS if category in d["metadata"]["categories"]]
     if contains:
         documents = [d for d in documents if lists_ingredient(RAW_LABELS[d["id"]], contains)]
     result = {"category": category, "contains": contains, "matching_products": len(documents)}
-    limit = int(limit)
 
     if not ingredient:
         result["products"] = [describe(d) for d in documents[:limit]]
@@ -188,7 +199,10 @@ def run_agent(messages):
             tool_calls.append({"name": call.function.name, "args": args, "result": result})
             messages.append({"role": "tool", "tool_call_id": call.id, "content": result})
 
-    return "Sorry, I hit my tool-call limit before finishing.", tool_calls
+    answer = "Sorry, I hit my tool-call limit before finishing."
+    # Close the turn with an assistant message, or the next turn would follow raw tool results.
+    messages.append({"role": "assistant", "content": answer})
+    return answer, tool_calls
 
 
 def ask(question):

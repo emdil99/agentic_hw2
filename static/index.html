@@ -101,7 +101,8 @@
     border-radius: 14px;
     display: flex;
     flex-direction: column;
-    min-height: 70vh;
+    height: min(80vh, 900px);
+    min-height: 480px;
     overflow: hidden;
   }
   .chat-head {
@@ -264,7 +265,7 @@
       <span>Supplement label agent</span>
       <button type="button" id="new-chat">New chat</button>
     </div>
-    <div class="messages" id="messages">
+    <div class="messages" id="messages" aria-live="polite">
       <div class="empty" id="empty">
         <h3>Try a question</h3>
         <p>Or type your own below.</p>
@@ -272,7 +273,7 @@
           <button class="example" type="button"><small>Amount</small>How much creatine is in one serving of MTN OPS Creatine Unflavored?</button>
           <button class="example" type="button"><small>Hidden in a blend</small>How much magnesium is in one serving of Muscle Feast Electrolytes++ Hydrate Unflavored?</button>
           <button class="example" type="button"><small>Side by side</small>Which has more protein per serving, NOW Sports Whey Protein Creamy Vanilla or NOW Sports Whey Protein Creamy Chocolate?</button>
-          <button class="example" type="button"><small>Whole database</small>Which electrolyte product in the database has the most sodium per serving?</button>
+          <button class="example" type="button"><small>Whole database</small>Which whey protein product in the database has the most protein per serving?</button>
           <button class="example" type="button"><small>Whole database</small>How many collagen products in the database list biotin as an ingredient?</button>
         </div>
       </div>
@@ -291,6 +292,8 @@
   const input = document.getElementById("input");
   const sendButton = document.getElementById("send");
   let sessionId = null;
+  // One question at a time: overlapping requests in one session would interleave its history.
+  let busy = false;
 
   function scrollToEnd() {
     messages.scrollTop = messages.scrollHeight;
@@ -304,6 +307,13 @@
   }
 
   function renderMarkdown(text) {
+    if (!window.marked || !window.DOMPurify) {
+      // The CDN scripts failed to load: show the answer as plain text rather than failing.
+      const fallback = document.createElement("div");
+      fallback.style.whiteSpace = "pre-wrap";
+      fallback.textContent = text;
+      return fallback.outerHTML;
+    }
     // Answers quote label text, so sanitize after converting the model's Markdown to HTML.
     return DOMPurify.sanitize(marked.parse(text), { ADD_ATTR: ["target"] });
   }
@@ -396,7 +406,8 @@
 
   async function ask(question) {
     question = question.trim();
-    if (!question) return;
+    if (!question || busy) return;
+    busy = true;
     empty.remove();
     addUserMessage(question);
     input.value = "";
@@ -420,6 +431,7 @@
       thinking.remove();
       addAgentMessage(`Something went wrong: ${error.message}. Please try again.`, [], true);
     } finally {
+      busy = false;
       sendButton.disabled = false;
       input.focus();
       scrollToEnd();
