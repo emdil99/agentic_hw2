@@ -51,7 +51,9 @@ def polite_get(session: requests.Session, url: str, params: dict | None = None) 
         if response.status_code != 429:
             response.raise_for_status()
             return response
-        wait_seconds = int(response.headers.get("Retry-After", DEFAULT_RETRY_AFTER_SECONDS)) + 1
+        retry_after = response.headers.get("Retry-After", "")
+        # Retry-After may also be an HTTP date; fall back to a fixed wait rather than crash.
+        wait_seconds = (int(retry_after) if retry_after.isdigit() else DEFAULT_RETRY_AFTER_SECONDS) + 1
         print(f"Rate limited; waiting {wait_seconds} seconds as the API requested", flush=True)
         time.sleep(wait_seconds)
     raise RuntimeError(f"still rate limited after {MAX_RATE_LIMIT_WAITS} waits: {url}")
