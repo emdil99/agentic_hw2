@@ -346,7 +346,10 @@ def make_extreme(category, labels, ingredient, direction):
         print(f"SKIP: {category} / {direction} {ingredient}: an unranked label discloses {format_mg(max(beaten) if direction == 'most' else min(beaten))}")
         return None
     question = f"Which {CATEGORY_NOUNS[category]} product in the database has the {direction} {ingredient} per serving?"
-    target = f"{best['display_name']}, with {format_mg(best_amount)} per serving."
+    target = (
+        f"{best['display_name']}, with {format_mg(best_amount)} per serving, "
+        f"among the {len(ranked)} labels that state one clear amount."
+    )
     return database_sample(
         category, f"database_{direction}", ingredient, question, target,
         value_mg=best_amount, answer_label_id=str(best["id"]), labels_ranked=len(ranked),
@@ -433,7 +436,20 @@ def assign_splits(samples, rng):
             sample["metadata"]["split"] = "holdout" if position % 5 == 0 else "dev"
 
 
+def previous_splits():
+    """Return {id: split} from the committed dataset, so a question never moves between dev and holdout.
+
+    Dropping or adding a question reshuffles the split of every later question type, which would move
+    questions already tuned against in dev into the holdout.
+    """
+    if not OUTPUT_PATH.exists():
+        return {}
+    records = [json.loads(line) for line in OUTPUT_PATH.read_text(encoding="utf-8").splitlines()]
+    return {record["id"]: record["metadata"]["split"] for record in records}
+
+
 def main():
+    frozen_splits = previous_splits()
     rng = random.Random(SEED)
     labels = load_labels()
     samples = []
@@ -443,6 +459,9 @@ def main():
     samples.extend(build_partial_name_questions(labels, set(), random.Random(PARTIAL_NAME_SEED)))
     samples.extend(build_database_questions(labels))
     assign_splits(samples, rng)
+    for sample in samples:
+        if sample["id"] in frozen_splits:
+            sample["metadata"]["split"] = frozen_splits[sample["id"]]
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     with OUTPUT_PATH.open("w", encoding="utf-8", newline="\n") as output:

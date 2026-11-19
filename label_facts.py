@@ -13,6 +13,22 @@ INGREDIENT_ALIASES = {
     "collagen": ["Collagen", "Collagen Peptides"],
 }
 
+# Other names labels use for an ingredient, beyond what DSLD's ingredient groups already cover.
+TERM_SYNONYMS = {
+    "stevia": ["stevia", "rebaudioside", "reb a", "reb m", "steviol"],
+    "monk fruit": ["monk fruit", "monkfruit", "luo han guo", "lo han guo", "lo han", "siraitia", "mogroside"],
+}
+
+# FDA Daily Values for adults, in milligrams, used to catch amounts DSLD transcribed in the wrong unit.
+DAILY_VALUE_MG = {
+    "Sodium": 2300,
+    "Potassium": 4700,
+    "Magnesium": 420,
+    "Protein": 50000,
+    "Protein (unspecified)": 50000,
+}
+MAX_DAILY_VALUE_MISMATCH = 10
+
 
 def all_rows(rows):
     """Return every ingredient row, including rows nested inside blends."""
@@ -59,7 +75,23 @@ def find_dose(label, group):
         return None
     if quantity["servingSizeQuantity"] != single_serving_quantity(label):
         return None
-    return quantity["quantity"] * MG_PER_UNIT[quantity["unit"]]
+    amount = quantity["quantity"] * MG_PER_UNIT[quantity["unit"]]
+    if not matches_daily_value(group, quantity, amount):
+        return None
+    return amount
+
+
+def matches_daily_value(group, quantity, amount):
+    """False when the label's own exact %DV contradicts the amount, e.g. magnesium '10 g' at 2% DV."""
+    if group not in DAILY_VALUE_MG:
+        return True
+    for target in quantity.get("dailyValueTargetGroup") or []:
+        # "<1%" style values are rounded down on purpose, so only an exact percentage can contradict.
+        if target.get("operator") in ("=", None) and target.get("percent"):
+            implied = target["percent"] / 100 * DAILY_VALUE_MG[group]
+            if not implied / MAX_DAILY_VALUE_MISMATCH <= amount <= implied * MAX_DAILY_VALUE_MISMATCH:
+                return False
+    return True
 
 
 def groups_for(ingredient):
@@ -95,22 +127,27 @@ def disclosed_amounts_mg(label, ingredient):
             continue
         for quantity in row.get("quantity") or []:
             if quantity["unit"] in MG_PER_UNIT:
-                amounts.append(quantity["quantity"] * MG_PER_UNIT[quantity["unit"]])
+                amount = quantity["quantity"] * MG_PER_UNIT[quantity["unit"]]
+                if matches_daily_value(row["ingredientGroup"], quantity, amount):
+                    amounts.append(amount)
     return amounts
 
 
 def listed_ingredient_text(label):
-    """Return the label's ingredient names, forms and notes, and its other ingredients, as lowercase text."""
+    """Return the label's ingredient names, groups, forms and notes, and its other ingredients, as lowercase text."""
     parts = []
     for row in all_rows(label["ingredientRows"]):
         parts += [row.get("name") or "", row.get("ingredientGroup") or "", row.get("notes") or ""]
         parts += [form.get("name") or "" for form in row.get("forms") or []]
     other = label.get("otheringredients") or {}
-    parts += [item.get("name") or "" for item in other.get("ingredients") or []]
+    for item in other.get("ingredients") or []:
+        parts += [item.get("name") or "", item.get("ingredientGroup") or ""]
     parts.append(other.get("text") or "")
     return " ".join(parts).lower()
 
 
 def lists_ingredient(label, term):
-    """True if the term appears as whole words, so 'vitamin c' does not match 'vitamin complex'."""
-    return re.search(rf"\b{re.escape(term.lower())}\b", listed_ingredient_text(label)) is not None
+    """True if the term or a known synonym appears as whole words, so 'vitamin c' does not match 'vitamin complex'."""
+    text = listed_ingredient_text(label)
+    names = TERM_SYNONYMS.get(term.strip().lower(), [term])
+    return any(re.search(rf"\b{re.escape(name.lower())}\b", text) for name in names)

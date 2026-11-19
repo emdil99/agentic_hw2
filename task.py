@@ -130,7 +130,7 @@ How to judge, depending on the gold answer:
 - An amount followed by "the same in all N versions": correct if the answer states that amount.
 - "It depends on the version", followed by each version's amount: correct only if the answer says the amount differs between versions, or asks which version is meant, and does not give one amount as the answer for the whole product. Listing each version's amount is fine.
 - A product name (from a which-has-more question): correct if the answer picks that same product.
-- A product name followed by "with ... per serving" (from a which-product-in-the-database question): correct only if the answer names that product as the one with the most or least. Naming another product is incorrect, even if the answer hedges.
+- A product name followed by "with ... per serving, among the N labels that state one clear amount" (from a which-product-in-the-database question): correct only if the answer names that product as the one with the most or least. Noting that some labels do not state an amount is fine. Naming another product is incorrect, even if the answer hedges.
 - A number of products, such as "17 products.": correct only if the answer gives exactly that number.
 - Label text such as warnings or directions: correct if the answer conveys the main points. It does not need to quote them.
 
