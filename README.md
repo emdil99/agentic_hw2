@@ -17,6 +17,37 @@ gcloud auth application-default login
 uv run app.py          # then open http://127.0.0.1:8000
 ```
 
+## Sample queries
+
+Each query was asked of the final agent, and of the same model (Gemini 3.5 Flash Lite) with no tools and no system prompt.
+
+### 1. How much creatine is in one serving of MTN OPS Creatine Unflavored?
+
+- **Expected:** 5 g of creatine per 5 g serving.
+- **Source:** DSLD label 327384, at `https://dsld.od.nih.gov/label/327384`, or through the API at `https://api.ods.od.nih.gov/dsld/v9/label/327384`.
+- **Agent:** "One serving (5 grams) of MTN OPS Creatine Unflavored contains 5 grams of micronized creatine monohydrate." It then cites DSLD ID 327384 with a link.
+- **No tools:** "one serving contains **5 grams** of pure Creatine Monohydrate."
+
+Both are right. A 5 g creatine scoop is common knowledge, so this query is a control: the agent adds a citation the shopper can check.
+
+### 2. How much magnesium is in one serving of Muscle Feast Electrolytes++ Hydrate Unflavored?
+
+- **Expected:** not disclosed. The label lists magnesium without an amount (DSLD unit `NP`), and magnesium sulfate appears among its other ingredients.
+- **Source:** DSLD label 267783, at `https://dsld.od.nih.gov/label/267783`.
+- **Agent:** "The label ... lists magnesium under its ingredients (as magnesium sulfate), but the exact amount per serving is not disclosed on the label." It cites DSLD ID 267783.
+- **No tools:** "one serving typically provides **125 mg of magnesium** (usually sourced from magnesium malate or TRAACS magnesium bisglycinate chelate...)."
+
+The model on its own invents a specific amount and a plausible-sounding source. The agent reports what the label actually says.
+
+### 3. How many collagen products in the database list biotin as an ingredient?
+
+- **Expected:** 21 products.
+- **Source:** every collagen label in `data/corpus.jsonl`, counted by `query_database` (`label_facts.lists_ingredient`). Each counted product links to its `https://dsld.od.nih.gov/label/<id>` page.
+- **Agent:** "There are 21 collagen products in the database that list biotin as an ingredient. Here are 10 of them: ..." Each listed product has its DSLD ID and link.
+- **No tools:** "I do not have access to a database of collagen products, so I cannot tell you how many of them list biotin."
+
+Only the agent's whole-database tool can answer this. The baseline agent, with search alone, got every question like this wrong.
+
 ## Data
 
 All label data comes from the NIH Office of Dietary Supplements' Dietary Supplement Label Database (DSLD), through its API at `https://api.ods.od.nih.gov/dsld/v9`, which needs no key. Each label can be viewed at `https://dsld.od.nih.gov/label/<id>`.
@@ -35,12 +66,12 @@ The API rate-limits clients. The script waits as long as the API's `Retry-After`
 
 ## The agent
 
-`agent.py` runs a tool-calling loop over Gemini 3.5 Flash Lite through LiteLLM and Vertex AI. Every tool call is recorded and returned with the answer. It has two tools:
+`agent.py` runs a tool-calling loop over Gemini 3.5 Flash Lite through LiteLLM and Vertex AI, capped at 6 tool rounds. Every tool call is recorded and returned with the answer. It has two tools:
 
 - **`search_labels`:** BM25 keyword search over the 935 documents, returning the top 5. This was the only tool in the baseline.
 - **`query_database`:** added in change 2 of the iteration log. It looks across every label in a category at once, so it can rank products by an ingredient's amount per serving, or count the products whose ingredient list mentions something. It says how many labels list the ingredient without one clear amount and so could not be ranked, and it never lets its result limit hide a tie.
 
-The system prompt started as one sentence. Changes 1 and 2 below each added to it.
+The system prompt started as one sentence. Changes 1 and 2 below each added a line, and change 3 was tried and reverted.
 
 ```
 uv run agent.py "How much creatine is in one serving of MTN OPS Creatine Unflavored?"
@@ -48,7 +79,7 @@ uv run agent.py "How much creatine is in one serving of MTN OPS Creatine Unflavo
 
 ## Eval set
 
-`scripts/build_dataset.py` generates the questions from the structured label data, so every gold answer is computed from the label rather than written by hand. Each sample records its question type, the DSLD label IDs it depends on (`gold_label_ids`) and a `source` link to each label. The script uses a fixed random seed, so it produces the same file every time. No eval question is used as a few-shot example in the agent's prompt.
+`scripts/build_dataset.py` generates the questions from the structured label data, so every gold answer is computed from the label rather than written by hand. All 141 samples are **gold**. Each records its question type, its `origin`, the DSLD label IDs it depends on (`gold_label_ids`), and a `source` link to each label, or a note saying which labels were counted. The script uses a fixed random seed, so it produces the same file every time. No eval question is used as a few-shot example in the agent's prompt.
 
 | Type | Count | Example | Gold answer comes from |
 |---|---|---|---|
@@ -61,15 +92,19 @@ uv run agent.py "How much creatine is in one serving of MTN OPS Creatine Unflavo
 | `comparison` | 12 | Which has more sodium per serving, A or B? | Two clean ingredient rows |
 | `partial_name_same` | 12 | How much creatine is in CytoSport Monster Creatine? | Every flavor of the product has the same dose |
 | `partial_name_varies` | 7 | How much protein is in NOW Sports Whey Protein Creamy? | Flavors differ, so the answer is "it depends" |
-| `database_most` | 3 | Which electrolyte product in the database has the most magnesium per serving? | Every label in the category, ranked |
+| `database_most` | 2 | Which collagen product in the database has the most collagen per serving? | Every label in the category, ranked |
 | `database_least` | 4 | Which whey protein product in the database has the least protein per serving? | Every label in the category, ranked |
 | `database_count` | 16 | How many collagen products in the database list biotin as an ingredient? | Every label in the category, counted |
 
 The first seven types are dataset v1, the two `partial_name` types were added in v2, and the three `database` types in v3. Each version adds questions without changing earlier ones.
 
-A question is only generated when the labels support exactly one answer. For example, a label listing creatine twice, an amount like "less than 1 g", or a dose given per scoop on a two-scoop serving is skipped. A most-or-least question is skipped if the winner is tied, or if a label that lists the ingredient without one clear amount discloses an amount that could beat the winner. This rules out both creatine questions, for example.
+A question is only generated when the labels support exactly one answer:
+- **Single amounts:** a label listing creatine twice, an amount like "less than 1 g", or a dose given per scoop on a two-scoop serving is skipped.
+- **Daily-value check:** an amount is ignored when its own exact % Daily Value says it is more than 10 times off. This catches DSLD unit errors such as magnesium "10 g" at 2% DV, which is really about 10 mg.
+- **Most and least:** a question is skipped if the winner is tied, or if a label that lists the ingredient without one clear amount discloses an amount that could beat the winner. Its gold answer says "among the N labels that state one clear amount".
+- **Counts:** counts include the synonyms labels use. Stevia also matches Reb A, rebaudioside and steviol glycosides; monk fruit also matches luo han guo.
 
-The 142 samples are split into **107 dev** and **35 holdout**, with every fifth question of each type held out. Hill-climbing uses dev only. The holdout is run once, at the end.
+The samples are split into **106 dev** and **35 holdout**, with every fifth question of each type held out. A question's split is frozen once assigned, so changing the dataset can never move a dev question into the holdout. Hill-climbing used dev only. The holdout was run once, on the final agent.
 
 ## Scorers
 
@@ -80,22 +115,22 @@ The 142 samples are split into **107 dev** and **35 holdout**, with every fifth 
 - **Deterministic:** `retrieved_gold_labels`, meaning search showed the agent every label the answer needs.
 - **Deterministic:** `numeric_match`, meaning the answer states the gold amount in any weight unit, within 0.5%.
 
-To run the evals, you need a Google Cloud project with Vertex AI and access to Gemini 3.5 Flash Lite. `uv run` installs the dependencies from `uv.lock` on first use.
+To run the evals, you need a Google Cloud project with Vertex AI and access to Gemini 3.5 Flash Lite. `uv run` installs the dependencies from `uv.lock` on first use. `--retry-on-error` re-runs a question that hits a temporary Vertex AI error (502 or 429) instead of aborting the whole eval.
 
 ```
 gcloud auth application-default login
-uv run inspect eval task.py                     # dev split, about 3 minutes
-uv run inspect eval task.py -T split=holdout    # final check only
-uv run inspect view                             # browse every answer and score
+uv run inspect eval task.py --max-samples 3 --retry-on-error=3                     # dev split
+uv run inspect eval task.py -T split=holdout --max-samples 3 --retry-on-error=3    # final check only
+uv run inspect view                                                                # browse every answer and score
 ```
 
 By default the grader model is the same Gemini model as the agent, so it grades its own answers. To use a different judge, add `--model-role grader=<model>`.
 
-The logs of each run in the log below are saved in `evals/results/` and open in `inspect view`.
+Every run in the log below is saved in `evals/results/` and opens in `inspect view`.
 
 ## Iteration log
 
-The margin of error is ±1/√n: ±11.5 points on the 76 v1 dev questions, ±10.5 on the 90 v2 dev questions, and **±9.7 on the 107 v3 dev questions**, which is the final dataset.
+The margin of error is ±1/√n. On the final dev set of 106 questions it is **±9.7 points**. On the 35-question holdout it is ±16.9 points.
 
 ### Summary
 
@@ -103,15 +138,19 @@ The margin of error is ±1/√n: ±11.5 points on the 76 v1 dev questions, ±10.
 |---|---|---|---|---|
 | 1 | v1 | Baseline | 96.1% | 5.3% |
 | 2 | v2 | Baseline | 97.8% | 8.9% |
-| 3 | v3 | Baseline | **82.2%** | **8.4%** |
-| 4 | v3 | + Change 1: cite labels | 80.4% | **95.3%** |
-| 5 | v3 | + Change 2: `query_database` tool | **97.2%** | 87.9% |
+| 6 | v3.1 | Baseline | **84.0%** | **8.5%** |
+| 7 | v3.1 | + Change 1: cite labels | 84.0% | **97.2%** |
+| 8 | v3.1 | + Change 2: `query_database` tool | **98.1%** | 86.8% |
+| 9 | v3.1 | + Change 3: honesty prompt (reverted) | 96.2% | 84.9% |
+| 10 | holdout | Final agent (change 2) | **100%** (35/35) | 91.4% |
 
-On dataset v3, measured against a ±9.7-point margin:
-- **Change 1 raised citations by 86.9 points** (8.4% → 95.3%), well beyond the margin. Its effect on correctness, −1.8 points, is within it.
-- **Change 2 raised correctness by 16.8 points** (80.4% → 97.2%), beyond the margin, and by 15.0 points over the v3 baseline. Its effect on citations, −7.4 points, is within it.
+On dataset v3.1, measured against the ±9.7-point margin:
+- **Change 1 raised citations by 88.7 points** (8.5% → 97.2%), well beyond the margin. Correctness did not move.
+- **Change 2 raised correctness by 14.2 points** (84.0% → 98.1%), beyond the margin. It also **lowered citations by 10.4 points** (97.2% → 86.8%), which is also beyond the margin, so it is a real regression and is explained below.
+- **Change 3 moved correctness and citations by −1.9 points each,** both within the margin. It did not help, so it was reverted.
+- **The final agent scored 35/35 on the holdout,** so the gains hold on questions that were never tuned against.
 
-Runs 1 and 2 are the story of finding a dataset hard enough to measure anything on.
+Runs 1 and 2 are the story of finding a dataset hard enough to measure anything on. Runs 3–5 were the first attempt on dataset v3. They were superseded when a code review found errors in some gold answers; their logs are kept in `evals/results/` for transparency.
 
 ### 1. Baseline on dataset v1: 96.1%
 
@@ -126,9 +165,12 @@ Log: `evals/results/01-baseline-dataset-v1-dev.eval`. Dev split, 76 questions.
 | Search retrieved the gold labels | 97.3% |
 | Numeric match | 100% |
 
-All three misses involved look-alike products. Search returned MET-Rx Creatine 4200 capsules instead of MET-Rx Creatine powder; two flavors of one brand were mixed up in a comparison; and search could not find "Only Protein Only Protein Protein Powder Vanilla".
+All three misses involved look-alike products:
+- Search returned MET-Rx Creatine 4200 capsules instead of MET-Rx Creatine powder.
+- Two flavors of one brand were mixed up in a comparison.
+- Search could not find "Only Protein Only Protein Protein Powder Vanilla".
 
-**The problem:** correctness can rise by at most 3.9 points, which is less than the ±11.5-point margin, so no change could ever show a real gain on this dataset. The questions were too easy for the agent, and that had to be fixed before choosing changes to make.
+**The problem:** correctness can rise by at most 3.9 points, which is less than the ±11.5-point margin on 76 questions, so no change could ever show a real gain on this dataset. The questions were too easy for the agent, and that had to be fixed before choosing changes to make.
 
 ### 2. Dataset v2: product names as shoppers say them
 
@@ -151,41 +193,80 @@ This run also shows the noise directly. With nothing changed, the same 76 v1 que
 
 **Takeaway:** correctness is still at the ceiling. The clearest room for improvement is in behaviour rather than facts: the agent almost never cites the label it used (8.9%), even though a shopper needs that to check the answer.
 
-### 3. Dataset v3, questions that need the whole database: 82.2%
+### 3. Dataset v3, questions that need the whole database
 
-Some questions a shopper asks need every label at once: which electrolyte has the most magnesium, or how many whey proteins use stevia. Top-5 search cannot answer these by design. Dataset v3 adds 23 of them, with gold answers computed over every label in the category. Each count was also re-checked independently against the documents the agent reads.
+Some questions a shopper asks need every label at once: which electrolyte has the most sodium, or how many whey proteins use stevia. Top-5 search cannot answer these by design. Dataset v3 added such questions, with gold answers computed over every label in the category.
 
-Log: `evals/results/03-baseline-dataset-v3-dev.eval`. Same agent as before. Dev split, 107 questions.
+On the first attempt (runs 3–5), the baseline got 0 of 17 dev whole-database questions right. Some answers admitted the limit ("the search tool... does not provide a total count"), but several were confidently wrong. For example, "there are **5** electrolyte products that list taurine", when the answer is 29, because it counted its 5 search results as if they were the whole database.
 
-The agent got **0 of the 17 dev whole-database questions** right, while scoring 88/90 on the rest. Some answers admitted the limit ("the search tool... does not provide a total count"), but several were confidently wrong. For example, "there are **5** electrolyte products that list taurine", when the answer is 29, because it counted its 5 search results as if they were the whole database. That is the failure this dataset was built to expose, and it gives the eval room to measure a real gain.
+**Code review, and dataset v3.1.** A review of the code then found two kinds of errors in the v3 gold answers. The fixes are in commit `6a5faa2`:
+- **Missed synonyms:** counts matched ingredient names literally, so 17 whey labels that list stevia only as Reb A or steviol glycosides were missed. Whey/stevia was 71 and is really 90. Four counts changed.
+- **A DSLD unit error:** "most magnesium" rewarded a label recorded as "10 g" of magnesium at 2% Daily Value, which is really about 10 mg. The daily-value check now rejects it. With it gone, no winner can be proven, so the question was dropped.
 
-### 4. Change 1, cite the labels used: citations 8.4% → 95.3%
+The fixes changed only whole-database questions. Splits were frozen so no dev question could move into the holdout. **Runs 6–9 repeat every step on the corrected dataset.** Each uses the exact `agent.py` from that step's original commit (`8f6d217`, `127c47e`, `1055292`), so the only difference from runs 3–5 is the corrected gold answers.
+
+### 6. Baseline on dataset v3.1: 84.0%
+
+Log: `evals/results/06-baseline-dataset-v3.1-dev.eval`. Dev split, 106 questions.
+
+The agent answered **0 of 16** whole-database questions correctly and 89 of the other 90. It cited its label on 8.5% of answers.
+
+### 7. Change 1, cite the labels used: citations 8.5% → 97.2%
 
 One sentence added to the system prompt: *"End every answer with the labels you used: brand and product name, DSLD ID, and link."*
 
-Log: `evals/results/04-change1-cite-labels-dev.eval`.
+Log: `evals/results/07-change1-cite-labels-dataset-v3.1-dev.eval`.
 
-Citations rose by 86.9 points. Correctness moved from 82.2% to 80.4%, which is two questions. One was a look-alike product: the agent answered from Vital Proteins Collagen Peptides *Lemon* (20 g) instead of the plain product (3.6 g). The other was "Only Protein", the search failure seen in every run, which happened to pass in run 3. Both are within the margin and unrelated to citing.
+Citations rose by 88.7 points, from 9 to 103 of 106 answers. Correctness stayed at 84.0%.
 
-### 5. Change 2, a whole-database tool: correctness 80.4% → 97.2%
+### 8. Change 2, a whole-database tool: correctness 84.0% → 98.1%
 
-Added the `query_database` tool and told the agent to use it for most, least and how-many questions, and never to count or rank from search results.
+Added the `query_database` tool, and told the agent to use it for most, least and how-many questions and never to count or rank from search results.
 
-Log: `evals/results/05-change2-database-tool-dev.eval`.
+Log: `evals/results/08-change2-database-tool-dataset-v3.1-dev.eval`.
 
-Whole-database questions went from **0/17 to 17/17**. Three questions are still wrong:
-- **MET-Rx Creatine and "Only Protein":** the same two retrieval failures as in every run.
-- **Invented product "Halcyon Foundry Whey Isolate Maple":** the agent correctly said it was not found, then offered a similar product's protein amount, which the judge counted as guessing.
+Whole-database questions went from **1/16 to 16/16**. The two remaining misses are the retrieval failures seen in every run: MET-Rx Creatine directions, and "Only Protein".
 
-While testing the tool, the agent was asked which whey protein has the most protein. It requested 1 result and presented one product as *the* answer, though seven products tie at 30 g. The tool now always returns every product tied with the last one listed, and the agent then reports the seven-way tie. This fix was made before run 5, and that question is not in the eval, since tied questions are excluded.
+**The regression:** citations fell by 10.4 points, beyond the margin. On whole-database questions, citations fell from 16 of 16 to 8 of 16, because count answers give a number of products without naming the labels. Citations on the other questions fell from 87 to 84 of 90.
 
-Citations fell from 95.3% to 87.9%, within the margin. Part of the drop is count answers, which give a number of products without naming 40 labels. Part is judge error: one answer marked as not citing ends with "DSLD ID: 316098" and its link.
+While testing the tool, the agent was asked which whey protein has the most protein. It requested 1 result and presented one product as *the* answer, though seven products tie at 30 g. The tool now always returns every product tied with the last one listed, and the agent then reports the seven-way tie. This fix was made before the tool was first scored. That question is not in the eval, since tied questions are excluded.
+
+### 9. Change 3, an honesty prompt: no gain, reverted
+
+Change 3 targeted the citation regression and one earlier miss, where the agent could not find an invented product and then offered a similar product's numbers. It added two lines: list the products `query_database` returns, and when a product cannot be found, say so without giving amounts from a different product.
+
+Log: `evals/results/09-change3-honesty-prompt-reverted-dev.eval`.
+
+| Score | Change 2 | Change 3 |
+|---|---|---|
+| Correct | 98.1% | 96.2% |
+| Cites label | 86.8% | 84.9% |
+
+Both moved −1.9 points, which is within the margin. Citations on whole-database answers improved from 8 to 12 of 16, but fell from 84 to 78 of 90 on the rest. The new wording also made the agent overcautious: it said it "could not find" Vital Proteins Collagen Peptides, which is in the database. **The change was reverted,** so the final agent uses the change 2 prompt.
+
+### 10. Holdout: 35/35
+
+Log: `evals/results/10-final-agent-holdout.eval`. The 35 holdout questions, run once on the final agent.
+
+| Score | Result |
+|---|---|
+| Reference judge (headline) | **100%** (35/35) |
+| Rubric: cites label | 91.4% |
+| Rubric: leads with answer | 100% |
+| Whole-database questions | 6/6 |
+
+The holdout score is consistent with the 98.1% dev score. Its ±16.9-point margin is wide, but no question in it was ever run during development.
 
 ## Known limitations
 
-- **The rubric judge never sees the label,** so `separates_label_from_advice` checks how an answer is worded, not whether its facts are true. Factual correctness is covered by the reference judge. The rubric judge also makes mistakes: in run 5 it marked an answer with a DSLD ID and link as not citing.
-- **`query_database` and the gold answers share their label-reading code** (`label_facts.py`). So the whole-database questions measure whether the agent knows to use the tool and reports what it returns, not whether the label parsing is right. The parsing itself was checked separately by recounting from the rendered documents.
+- **The rubric judge never sees the label,** so `separates_label_from_advice` checks how an answer is worded, not whether its facts are true. Factual correctness is covered by the reference judge.
+- **Both judges make mistakes:**
+  - In run 5, the rubric judge marked an answer that gave a DSLD ID and link as not citing.
+  - In run 9, the reference judge marked "12 whey protein products list maltodextrin" wrong, though 12 is the gold answer.
+  - Single-question swings like these are why gains are only claimed beyond the margin of error.
+- **`query_database` and the gold answers share their label-reading code** (`label_facts.py`). So the whole-database questions measure whether the agent knows to use the tool and reports what it returns, not whether the label parsing is right. The parsing was checked separately, by recounting from the rendered documents and by the code review that found the synonym and unit errors.
 - **`numeric_match` passes if the gold amount appears anywhere in the answer,** even if the answer concludes something else. It is a supporting check, not the headline.
 - **By default the grader is the same Gemini model as the agent.** A different grader can be set with `--model-role grader=<model>`.
-- **Gold answers reflect DSLD's transcription of each label** as of the pull date. A typo in DSLD becomes a typo in the gold answer.
+- **Gold answers reflect DSLD's transcription of each label** as of the pull date. The daily-value check catches unit errors only for sodium, potassium, magnesium and protein.
+- **Conversations are kept in memory.** The Cloud Run service runs a single instance so that follow-up questions reach the same conversation, and conversations reset when the service restarts.
 - **The NIH ODS fact sheets were planned as a second source,** but `ods.od.nih.gov` blocks automated clients, so this agent uses DSLD only.
