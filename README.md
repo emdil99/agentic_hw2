@@ -130,139 +130,109 @@ Every run in the log below is saved in `evals/results/` and opens in `inspect vi
 
 ## Iteration log
 
-The margin of error is ±1/√n. On the final dev set of 106 questions it is **±9.7 points**. On the 35-question holdout it is ±16.9 points.
+### How to read this
 
-### Summary
+Think of the eval as a **practice test**: 106 questions whose right answers we already know (the dev split). Hill climbing means running the agent on the test, changing one thing, running the exact same test again, and only counting an improvement if it is too big to be luck.
 
-| Run | Dataset | Agent | Correct (headline) | Cites label |
-|---|---|---|---|---|
-| 1 | v1 | Baseline | 96.1% | 5.3% |
-| 2 | v2 | Baseline | 97.8% | 8.9% |
-| 6 | v3.1 | Baseline | **84.0%** | **8.5%** |
-| 7 | v3.1 | + Change 1: cite labels | 84.0% | **97.2%** |
-| 8 | v3.1 | + Change 2: `query_database` tool | **98.1%** | 86.8% |
-| 9 | v3.1 | + Change 3: honesty prompt (reverted) | 96.2% | 84.9% |
-| 10 | holdout | Final agent (change 2) | **100%** (35/35) | 91.4% |
+**What "too big to be luck" means.** The model is a little random. We ran the identical agent on identical questions twice and got 73 right, then 74, with nothing changed. The assignment's rule of thumb for this noise is ±1/√n. With 106 questions that is **±9.7 points**, so a change has to move a score by more than about 10 points before we call it real. On the 35-question final exam it is ±16.9 points.
 
-On dataset v3.1, measured against the ±9.7-point margin:
-- **Change 1 raised citations by 88.7 points** (8.5% → 97.2%), well beyond the margin. Correctness did not move.
-- **Change 2 raised correctness by 14.2 points** (84.0% → 98.1%), beyond the margin. It also **lowered citations by 10.4 points** (97.2% → 86.8%), which is also beyond the margin, so it is a real regression and is explained below.
-- **Change 3 moved correctness and citations by −1.9 points each,** both within the margin. It did not help, so it was reverted.
-- **The final agent scored 35/35 on the holdout,** so the gains hold on questions that were never tuned against.
+### The results at a glance
 
-Runs 1 and 2 are the story of finding a dataset hard enough to measure anything on. Runs 3–5 were the first attempt on dataset v3. They were superseded when a code review found errors in some gold answers; their logs are kept in `evals/results/` for transparency.
+| Step | What we changed | Correct answers | Answers that cite their label |
+|---|---|---|---|
+| Starting point | Search tool only, one-sentence prompt | 84.0% | 8.5% |
+| Change 1 | "Show your sources" | 84.0% (no change) | **97.2%** (+88.7: real) |
+| Change 2 | A tool that sees the whole database | **98.1%** (+14.2: real) | 86.8% (−10.4: a real side effect) |
+| Change 3 | Extra honesty instructions | 96.2% (−1.9: luck) | 84.9% (−1.9: luck), **so it was undone** |
+| Final exam | The final agent on 35 questions nobody had seen | **100%** (35/35) | 91.4% |
 
-### 1. Baseline on dataset v1: 96.1%
+Every step except the final exam uses the same 106 questions (dataset v3.1). The final agent is the one from change 2.
 
-Log: `evals/results/01-baseline-dataset-v1-dev.eval`. Dev split, 76 questions.
+### Before the starting point: finding a test hard enough to learn from
 
-| Score | Result |
-|---|---|
-| Reference judge (headline) | **96.1%** (73/76) |
-| Rubric: leads with answer | 90.8% |
-| Rubric: cites label | 5.3% |
-| Rubric: separates label from advice | 98.7% |
-| Search retrieved the gold labels | 97.3% |
-| Numeric match | 100% |
+**The first test was too easy (96.1%).** On the first version of the questions, the agent got 73 of 76 right. That sounds great, but it is a problem: the most it could ever improve was 4 points, and the margin of error on 76 questions is ±11.5 points. No change could ever prove itself, like trying to show a tutor helped a student who already gets A's. Log: `evals/results/01-baseline-dataset-v1-dev.eval`.
 
-All three misses involved look-alike products:
-- Search returned MET-Rx Creatine 4200 capsules instead of MET-Rx Creatine powder.
-- Two flavors of one brand were mixed up in a comparison.
-- Search could not find "Only Protein Only Protein Protein Powder Vanilla".
+**We guessed at a weakness, and guessed wrong (97.8%).** All three mistakes involved look-alike products, such as MET-Rx Creatine *powder* versus MET-Rx Creatine *4200 capsules*. So we added 19 questions that name a product without its flavor, the way shoppers do: *"How much protein is in NOW Sports Whey Protein Creamy?"* We expected the agent to get confused. Instead it got all 14 dev questions right, and listed each flavor's amount without being asked to. Wrong guess, so the test was still too easy. This is also the run where the identical questions scored 74 instead of 73. Log: `evals/results/02-baseline-dataset-v2-dev.eval`.
 
-**The problem:** correctness can rise by at most 3.9 points, which is less than the ±11.5-point margin on 76 questions, so no change could ever show a real gain on this dataset. The questions were too easy for the agent, and that had to be fixed before choosing changes to make.
+**We found the real weakness: questions about the whole database.** Imagine a shopper asks *"How many collagen products list biotin?"* The agent's only tool was a search that shows it **5 labels at a time**, like asking someone to count every red book in a library when they can only ever see 5 books. Some answers admitted they could not count. Others were confidently wrong: asked how many electrolyte products contain taurine, the agent said **"there are 5"**. It had counted the 5 search results in front of it, and the real answer is 29. We added 23 questions like this (dataset v3, later corrected to 22, as described next), and the agent got every dev one wrong. Now the test had room to show improvement.
 
-### 2. Dataset v2: product names as shoppers say them
+**We fixed our own answer key, then redid every step.** A code review found mistakes in a few of *our* correct answers:
+- We had counted 71 whey proteins with stevia, but missed labels that call it "Reb A" or "steviol glycosides". The real number is 90.
+- One "most magnesium" answer came from an NIH typo: a label recorded as "10 g" of magnesium, which its own 2% Daily Value shows is really about 10 mg. With the typo excluded, no clear winner can be proven, so that question was dropped.
 
-Since every miss involved look-alike products, the obvious hypothesis was that ambiguous product names are the agent's weakness. Dataset v2 adds 19 questions that name a product without its flavor, the way shoppers do, such as "NOW Sports Whey Protein Creamy". The gold answer is either the shared amount, or "it depends on the version" when flavors differ. The new questions use their own random generator, so the 100 v1 questions come out byte-for-byte unchanged. This was checked by comparing the files.
+We fixed the answer key (dataset v3.1, commit `6a5faa2`) and re-ran the starting point and every change against it, each using that step's original code (commits `8f6d217`, `127c47e`, `1055292`). That way all the scores compare fairly, like regrading every exam after finding typos in the answer key. The earlier attempt's logs are kept as `evals/results/03-…`, `04-…` and `05-…`.
 
-Log: `evals/results/02-baseline-dataset-v2-dev.eval`. Dev split, 90 questions.
+### Starting point: 84.0% correct, 8.5% citing
 
-| Score | v1 baseline | v2 baseline |
-|---|---|---|
-| Reference judge (headline) | 96.1% | **97.8%** (88/90) |
-| Rubric: leads with answer | 90.8% | 94.4% |
-| Rubric: cites label | 5.3% | 8.9% |
-| Rubric: separates label from advice | 98.7% | 100% |
-| Search retrieved the gold labels | 97.3% | 97.7% |
-| Numeric match | 100% | 100% |
+The agent got 89 of the 90 regular questions right and **0 of the 16** whole-database questions. It named the label behind its answer only 8.5% of the time. Log: `evals/results/06-baseline-dataset-v3.1-dev.eval`.
 
-**The hypothesis was wrong.** The agent got all 14 new dev questions right, and on "it depends" questions it listed each flavor's amount without being asked to. The two remaining misses are the same retrieval failures as in v1.
+### Change 1: "Show your sources." Citations 8.5% → 97.2%
 
-This run also shows the noise directly. With nothing changed, the same 76 v1 questions scored 74/76, up from 73/76, because the flavor-confusion comparison flipped to correct. That one-question swing is why the margin of error matters.
+We added one sentence to the agent's instructions: *"End every answer with the labels you used: brand and product name, DSLD ID, and link."*
 
-**Takeaway:** correctness is still at the ceiling. The clearest room for improvement is in behaviour rather than facts: the agent almost never cites the label it used (8.9%), even though a shopper needs that to check the answer.
+For example, in a simplified illustration:
 
-### 3. Dataset v3, questions that need the whole database
+- **Before:** "One serving contains 5 grams of creatine."
+- **After:** "One serving contains 5 grams of creatine. Source: MTN OPS Creatine Unflavored, DSLD ID 327384, https://dsld.od.nih.gov/label/327384"
 
-Some questions a shopper asks need every label at once: which electrolyte has the most sodium, or how many whey proteins use stevia. Top-5 search cannot answer these by design. Dataset v3 added such questions, with gold answers computed over every label in the category.
+Citations jumped by 88.7 points, from 9 answers to 103. That is far more than the 10-point bar, so the gain is **real**. Correctness did not move, which is what we expected: this change makes answers checkable, not smarter. A shopper can now click through to the label and see for themselves. Log: `evals/results/07-change1-cite-labels-dataset-v3.1-dev.eval`.
 
-On the first attempt (runs 3–5), the baseline got 0 of 17 dev whole-database questions right. Some answers admitted the limit ("the search tool... does not provide a total count"), but several were confidently wrong. For example, "there are **5** electrolyte products that list taurine", when the answer is 29, because it counted its 5 search results as if they were the whole database.
+### Change 2: a catalog, not just a search. Correct 84.0% → 98.1%
 
-**Code review, and dataset v3.1.** A review of the code then found two kinds of errors in the v3 gold answers. The fixes are in commit `6a5faa2`:
-- **Missed synonyms:** counts matched ingredient names literally, so 17 whey labels that list stevia only as Reb A or steviol glycosides were missed. Whey/stevia was 71 and is really 90. Four counts changed.
-- **A DSLD unit error:** "most magnesium" rewarded a label recorded as "10 g" of magnesium at 2% Daily Value, which is really about 10 mg. The daily-value check now rejects it. With it gone, no winner can be proven, so the question was dropped.
+We gave the agent a second tool, `query_database`, that looks at **every** label in a category at once, like handing the person in the library the full catalog instead of letting them peek at 5 books. We also told it to use that tool for "which has the most", "which has the least" and "how many" questions, and never to count search results.
 
-The fixes changed only whole-database questions. Splits were frozen so no dev question could move into the holdout. **Runs 6–9 repeat every step on the corrected dataset.** Each uses the exact `agent.py` from that step's original commit (`8f6d217`, `127c47e`, `1055292`), so the only difference from runs 3–5 is the corrected gold answers.
+- **Before:** "There are 5 electrolyte products that list taurine."
+- **After:** "There are 21 collagen products in the database that list biotin as an ingredient. Here are 10 of them: …"
 
-### 6. Baseline on dataset v3.1: 84.0%
+Whole-database questions went from **1 of 16 to 16 of 16**, and overall correctness rose 14.2 points. That is more than the 10-point bar, so the gain is **real**. The two questions it still misses are the same ones it misses in every run, because search cannot find the right label: MET-Rx Creatine (it finds the 4200 capsules), and a product oddly named "Only Protein Only Protein Protein Powder Vanilla".
 
-Log: `evals/results/06-baseline-dataset-v3.1-dev.eval`. Dev split, 106 questions.
+**A side effect.** On "how many" questions, the agent now often answers "21 products" without naming the labels, so it cites its sources less: citations fell from 97.2% to 86.8%. That 10.4-point drop is also beyond the bar, so it is a **real cost** of this change, and we report it rather than hide it.
 
-The agent answered **0 of 16** whole-database questions correctly and 89 of the other 90. It cited its label on 8.5% of answers.
-
-### 7. Change 1, cite the labels used: citations 8.5% → 97.2%
-
-One sentence added to the system prompt: *"End every answer with the labels you used: brand and product name, DSLD ID, and link."*
-
-Log: `evals/results/07-change1-cite-labels-dataset-v3.1-dev.eval`.
-
-Citations rose by 88.7 points, from 9 to 103 of 106 answers. Correctness stayed at 84.0%.
-
-### 8. Change 2, a whole-database tool: correctness 84.0% → 98.1%
-
-Added the `query_database` tool, and told the agent to use it for most, least and how-many questions and never to count or rank from search results.
+**A bug found along the way.** While testing the new tool, we asked *"Which whey protein has the most protein?"* The agent asked for the single top result and named one product, but seven products are tied at 30 g. We fixed the tool so it always shows every product tied for a spot, and now the agent reports the seven-way tie. This fix was made before change 2 was scored, and that question is not in the test, since tied questions are left out.
 
 Log: `evals/results/08-change2-database-tool-dataset-v3.1-dev.eval`.
 
-Whole-database questions went from **1/16 to 16/16**. The two remaining misses are the retrieval failures seen in every run: MET-Rx Creatine directions, and "Only Protein".
+### Change 3: trying to fix the side effect. No gain, so it was undone
 
-**The regression:** citations fell by 10.4 points, beyond the margin. On whole-database questions, citations fell from 16 of 16 to 8 of 16, because count answers give a number of products without naming the labels. Citations on the other questions fell from 87 to 84 of 90.
+We added instructions to list the products behind every whole-database answer, and, when a product cannot be found, to say so without giving a different product's numbers. (That second line targeted an earlier mistake, where the agent could not find an invented product and then offered a similar product's protein amount.)
 
-While testing the tool, the agent was asked which whey protein has the most protein. It requested 1 result and presented one product as *the* answer, though seven products tie at 30 g. The tool now always returns every product tied with the last one listed, and the agent then reports the seven-way tie. This fix was made before the tool was first scored. That question is not in the eval, since tied questions are excluded.
-
-### 9. Change 3, an honesty prompt: no gain, reverted
-
-Change 3 targeted the citation regression and one earlier miss, where the agent could not find an invented product and then offered a similar product's numbers. It added two lines: list the products `query_database` returns, and when a product cannot be found, say so without giving amounts from a different product.
-
-Log: `evals/results/09-change3-honesty-prompt-reverted-dev.eval`.
-
-| Score | Change 2 | Change 3 |
+| | After change 2 | After change 3 |
 |---|---|---|
-| Correct | 98.1% | 96.2% |
-| Cites label | 86.8% | 84.9% |
+| Correct answers | 98.1% | 96.2% |
+| Citing their label | 86.8% | 84.9% |
 
-Both moved −1.9 points, which is within the margin. Citations on whole-database answers improved from 8 to 12 of 16, but fell from 84 to 78 of 90 on the rest. The new wording also made the agent overcautious: it said it "could not find" Vital Proteins Collagen Peptides, which is in the database. **The change was reverted,** so the final agent uses the change 2 prompt.
+Both moved by 1.9 points, well inside the 10-point noise, so **nothing real happened**. Looking closer, citations on the 16 whole-database answers did improve, from 8 to 12, but they got worse on everything else, from 84 to 78 of 90. The new wording also made the agent overcautious: it claimed it "could not find" Vital Proteins Collagen Peptides, which is in the database.
 
-### 10. Holdout: 35/35
+So we **undid change 3**, and the final agent uses the change 2 instructions. Not every change helps, and keeping only the ones that do is the point of hill climbing. Log: `evals/results/09-change3-honesty-prompt-reverted-dev.eval`.
 
-Log: `evals/results/10-final-agent-holdout.eval`. The 35 holdout questions, run once on the final agent.
+### Final exam: 35 out of 35
 
-| Score | Result |
+From the very start, 35 questions were set aside. Nobody looked at them, and the agent was never run on them while we made changes. At the end, we ran the final agent on them **once**:
+
+| | Result |
 |---|---|
-| Reference judge (headline) | **100%** (35/35) |
-| Rubric: cites label | 91.4% |
-| Rubric: leads with answer | 100% |
-| Whole-database questions | 6/6 |
+| Correct answers | **35 of 35 (100%)** |
+| Whole-database questions | 6 of 6 |
+| Citing their label | 91.4% |
+| Answering in the first sentence | 100% |
 
-The holdout score is consistent with the 98.1% dev score. Its ±16.9-point margin is wide, but no question in it was ever run during development.
+With only 35 questions the margin of error is wide (±16.9 points), but the score agrees with the 98.1% on the practice questions. That is evidence the improvements are real, not just tuned to the questions we practiced on. Log: `evals/results/10-final-agent-holdout.eval`.
+
+### How this meets the requirement
+
+- **Baseline score:** 84.0% correct and 8.5% citing, on the final 106 dev questions.
+- **Two or more changes, each with its new score:**
+  - change 1 (citations): 97.2% citing
+  - change 2 (the whole-database tool): 98.1% correct
+  - change 3 (tried and undone): 96.2% correct
+- **Which gains beat the ±1/√n margin of ±9.7 points:** change 1's citation gain (+88.7) and change 2's correctness gain (+14.2) do. Change 2's citation drop (−10.4) is also beyond the margin, so it is reported as a real cost. Change 3's moves (−1.9) do not.
 
 ## Known limitations
 
 - **The rubric judge never sees the label,** so `separates_label_from_advice` checks how an answer is worded, not whether its facts are true. Factual correctness is covered by the reference judge.
 - **Both judges make mistakes:**
-  - In run 5, the rubric judge marked an answer that gave a DSLD ID and link as not citing.
-  - In run 9, the reference judge marked "12 whey protein products list maltodextrin" wrong, though 12 is the gold answer.
+  - On the first, superseded attempt at dataset v3, the rubric judge marked an answer that gave a DSLD ID and link as not citing.
+  - In change 3's run, the reference judge marked "12 whey protein products list maltodextrin" wrong, though 12 is the gold answer.
   - Single-question swings like these are why gains are only claimed beyond the margin of error.
 - **`query_database` and the gold answers share their label-reading code** (`label_facts.py`). So the whole-database questions measure whether the agent knows to use the tool and reports what it returns, not whether the label parsing is right. The parsing was checked separately, by recounting from the rendered documents and by the code review that found the synonym and unit errors.
 - **`numeric_match` passes if the gold amount appears anywhere in the answer,** even if the answer concludes something else. It is a supporting check, not the headline.
